@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 // --- Configuration ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
-const ADMIN_IDS = (process.env.ADMIN_IDS || "").split(',');
+// ክፍተት (Space) ካለ አጥርቶ የሚቀበል (Trim)
+const ADMIN_IDS = (process.env.ADMIN_IDS || "").split(',').map(id => id.trim());
 
 if (!BOT_TOKEN) throw new Error('BOT_TOKEN is missing!');
 if (!MONGODB_URI) throw new Error('MONGODB_URI is missing!');
@@ -32,17 +33,27 @@ async function connectToDatabase() {
 // --- Bot Setup ---
 const bot = new Telegraf(BOT_TOKEN);
 
-// 1. መነሻ (Start) - Keyboard Button
+// 1. መነሻ (Start) - አድሚን ከሆነ ተጨማሪ በተን ያሳያል
 bot.start(async (ctx) => {
   const firstName = ctx.from.first_name;
+  const userId = String(ctx.from.id);
+  const isUserAdmin = ADMIN_IDS.includes(userId);
   
+  // መደበኛ በተኖች
+  const buttons = [
+      ['🆘 እርዳኝ (Emergency)'], 
+      ['📢 Join Channel']
+  ];
+
+  // አድሚን ከሆነ ብቻ ይህ በተን ይጨመር
+  if (isUserAdmin) {
+      buttons.push(['🔐 Admin Panel']);
+  }
+
   await ctx.reply(
     `ሰላም ${firstName}! እንኳን ወደ NoFap ኢትዮጵያ በሰላም መጣህ።\n\n` +
     `ስሜት ሲመጣብህ ወይም ሲጨንቅህ እታች ያለውን "🆘 እርዳኝ (Emergency)" የሚለውን በተን ተጫን።`,
-    Markup.keyboard([
-      ['🆘 እርዳኝ (Emergency)'], 
-      ['📢 Join Channel']
-    ]).resize()
+    Markup.keyboard(buttons).resize()
   );
 });
 
@@ -78,19 +89,31 @@ const isAdmin = (ctx, next) => {
   const userId = String(ctx.from.id);
   if (ADMIN_IDS.includes(userId)) {
     return next();
+  } else {
+    // አድሚን ካልሆነ ዝም ይበል (ወይም ማስጠንቀቂያ መስጠት ይቻላል)
   }
 };
 
-// Admin Menu
+// አድሚን ሜኑን የሚያሳይ Function (Reusable)
+async function showAdminMenu(ctx) {
+    await ctx.reply(
+        '👮‍♂️ **Admin Panel**\n\nምን ማድረግ ይፈልጋሉ?',
+        Markup.inlineKeyboard([
+          [Markup.button.callback('➕ ፅሁፍ ለመጨመር', 'add_content')],
+          [Markup.button.callback('🗑️ ፅሁፍ ለመቀነስ', 'manage_content')],
+          [Markup.button.callback('📊 ስታቲስቲክስ', 'view_stats')]
+        ])
+    );
+}
+
+// አድሚኑ በተኑን ሲጫን
+bot.hears('🔐 Admin Panel', isAdmin, async (ctx) => {
+    await showAdminMenu(ctx);
+});
+
+// አድሚኑ /admin ብሎ ሲጽፍ
 bot.command('admin', isAdmin, async (ctx) => {
-  await ctx.reply(
-    '👮‍♂️ **Admin Panel**\n\nምን ማድረግ ይፈልጋሉ?',
-    Markup.inlineKeyboard([
-      [Markup.button.callback('➕ ፅሁፍ ለመጨመር', 'add_content')],
-      [Markup.button.callback('🗑️ ፅሁፍ ለመቀነስ', 'manage_content')], // አዲስ የተጨመረ
-      [Markup.button.callback('📊 ስታቲስቲክስ', 'view_stats')]
-    ])
-  );
+    await showAdminMenu(ctx);
 });
 
 // Add Content Logic
@@ -104,7 +127,8 @@ bot.action('add_content', isAdmin, async (ctx) => {
 
 // Text Handler for adding content
 bot.on('text', async (ctx) => {
-  if (ctx.message.text === '🆘 እርዳኝ (Emergency)' || ctx.message.text === '📢 Join Channel') return;
+  // በተኖችን እንዳይቀበል
+  if (['🆘 እርዳኝ (Emergency)', '📢 Join Channel', '🔐 Admin Panel'].includes(ctx.message.text)) return;
 
   if (ctx.message.reply_to_message && 
       ctx.message.reply_to_message.text.includes('የምትፈልገውን አነቃቂ ፅሁፍ')) {
@@ -122,12 +146,9 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// --- አዲስ: ፅሁፍ የማጥፋት ስራ (Delete Logic) ---
-
-// 1. ዝርዝር ማሳየት
+// Delete Logic
 bot.action('manage_content', isAdmin, async (ctx) => {
     await connectToDatabase();
-    // በቅርብ የተጨመሩ 5 ፅሁፎችን ማምጣት
     const items = await Motivation.find().sort({ addedAt: -1 }).limit(5);
     
     if (items.length === 0) {
@@ -138,7 +159,6 @@ bot.action('manage_content', isAdmin, async (ctx) => {
     await ctx.reply('👇 ለመቀነስ/ለማጥፋት የሚፈልጉትን ይምረጡ (የቅርብ 5ቱ):');
 
     for (const item of items) {
-        // ፅሁፉ በጣም ረጅም ከሆነ አጠር አድርጎ ማሳየት
         const preview = item.text.length > 50 ? item.text.substring(0, 50) + '...' : item.text;
         
         await ctx.reply(
@@ -151,10 +171,9 @@ bot.action('manage_content', isAdmin, async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// 2. በተግባር ማጥፋት
-// "delete_" ብሎ የሚጀምር ማንኛውንም CallBack ይቀበላል
+// Delete Action
 bot.action(/^delete_(.+)$/, isAdmin, async (ctx) => {
-    const id = ctx.match[1]; // IDውን ከ button ላይ ይቀበላል
+    const id = ctx.match[1];
     await connectToDatabase();
     
     try {
