@@ -457,7 +457,7 @@ bot.action('ren_str', c => ask(c, 'awaiting_streak_name', 'አዲስ ስም ላ�
 bot.action('adm_chan', async (ctx) => {
     const ch = await Channel.find({});
     let b = [[Markup.button.callback('➕ Add Channel', 'add_ch')]];
-    ch.forEach(x => b.push([Markup.button.callback(`🗑️ ${x.name}`, `del_ch_${x._id}`)])]);
+    ch.forEach(x => b.push([Markup.button.callback(`🗑️ ${x.name}`, `del_ch_${x._id}`)]));
     await ctx.editMessageText('Channels:', Markup.inlineKeyboard(b));
 });
 bot.action('add_ch', c => ask(c, 'awaiting_channel_name', 'የቻናሉን ስም ላክ:'));
@@ -467,7 +467,7 @@ bot.action(/^del_ch_(.+)$/, async c => { await Channel.findByIdAndDelete(c.match
 bot.action('adm_cus', async (ctx) => {
     const b = await CustomButton.find({});
     let btns = [[Markup.button.callback('➕ Add Button', 'add_cus')]];
-    b.forEach(x => btns.push([Markup.button.callback(`🗑️ ${x.label}`, `del_cus_${x._id}`)])]);
+    b.forEach(x => btns.push([Markup.button.callback(`🗑️ ${x.label}`, `del_cus_${x._id}`)]));
     await ctx.editMessageText('Custom Buttons:', Markup.inlineKeyboard(btns));
 });
 bot.action('add_cus', c => ask(c, 'awaiting_btn_name', 'የበተኑን ስም ላክ:'));
