@@ -88,7 +88,7 @@ async function getConfig(key, def) {
     const doc = await Config.findOne({ key });
     return doc ? doc.value : def;
 }
-// Helper to escape Markdown characters to prevent crashes
+// Robust MarkdownV2 Escaping
 function escapeMarkdown(text) {
     if (!text) return '';
     return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
@@ -159,11 +159,11 @@ bot.on(['text', 'photo', 'video', 'voice'], async (ctx) => {
                 if (state.step === 'awaiting_urge_name') { await Config.findOneAndUpdate({ key: 'urge_btn_label' }, { value: text }, { upsert: true }); await ctx.reply('✅ Saved!'); await clearAdminStep(userId); return; }
                 if (state.step === 'awaiting_streak_name') { await Config.findOneAndUpdate({ key: 'streak_btn_label' }, { value: text }, { upsert: true }); await ctx.reply('✅ Saved!'); await clearAdminStep(userId); return; }
                 
-                // Add Content Handlers
+                // Content
                 if (state.step === 'awaiting_channel_name') { await setAdminStep(userId, 'awaiting_channel_link', { name: text }); return ctx.reply('🔗 Link:'); }
                 if (state.step === 'awaiting_channel_link') { await Channel.create({ name: state.tempData.name, link: text }); await ctx.reply('✅ Added!'); await clearAdminStep(userId); return; }
                 
-                if (state.step === 'awaiting_motivation') { await Motivation.create({ text }); await ctx.reply('✅ Motivation Added!'); await clearAdminStep(userId); return; }
+                if (state.step === 'awaiting_motivation') { await Motivation.create({ text }); await ctx.reply('✅ Added!'); await clearAdminStep(userId); return; }
 
                 // Custom Button Wizard
                 if (state.step === 'awaiting_btn_name') { await setAdminStep(userId, 'awaiting_btn_content', { label: text }); return ctx.reply('📥 Content (Text/Photo/Video/Voice):'); }
@@ -243,44 +243,101 @@ bot.on(['text', 'photo', 'video', 'voice'], async (ctx) => {
 // ============================================================
 
 async function handleStreak(ctx) {
-    const userId = String(ctx.from.id);
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId, firstName: ctx.from.first_name });
-    const diff = Math.floor(Math.abs(new Date() - user.streakStart) / 86400000);
-    await ctx.reply(`🔥 **${escapeMarkdown(user.firstName)}**\nStreak: **${diff} Days**\nBest: ${user.bestStreak}`, 
-        Markup.inlineKeyboard([
-            [Markup.button.callback('💔 ወደቅኩ (Relapse)', `rel_${userId}`)],
-            [Markup.button.callback('🏆 ደረጃ (Leaderboard)', `led_${userId}`)],
-            [Markup.button.callback('🔄 Refresh', `ref_${userId}`)]
-        ]));
+    try {
+        const userId = String(ctx.from.id);
+        let user = await User.findOne({ userId });
+        if (!user) user = await User.create({ userId, firstName: ctx.from.first_name });
+        const diff = Math.floor(Math.abs(new Date() - user.streakStart) / 86400000);
+        
+        // Use MarkdownV2 compatible formatting manually for consistency with EditMessage
+        const name = escapeMarkdown(user.firstName || 'User');
+        const msg = `🔥 *${name}*\nStreak: *${diff} Days*\nBest: ${user.bestStreak}`;
+        
+        await ctx.reply(msg, {
+            parse_mode: 'MarkdownV2',
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback('💔 ወደቅኩ (Relapse)', `rel_${userId}`)],
+                [Markup.button.callback('🏆 ደረጃ (Leaderboard)', `led_${userId}`)],
+                [Markup.button.callback('🔄 Refresh', `ref_${userId}`)]
+            ])
+        });
+    } catch (e) { console.error("Streak Error:", e); }
 }
 
 const verify = (ctx, id) => String(ctx.from.id) === id;
-bot.action(/^rel_(.+)$/, async ctx => { if(!verify(ctx, ctx.match[1])) return; await ctx.editMessageText('Reason?', Markup.inlineKeyboard([[Markup.button.callback('🥱 Bored', `rsn_bor_${ctx.match[1]}`)], [Markup.button.callback('😰 Stress', `rsn_str_${ctx.match[1]}`)], [Markup.button.callback('🔥 Urge', `rsn_urg_${ctx.match[1]}`)], [Markup.button.callback('❌ Cancel', `can_${ctx.match[1]}`)]])); });
-bot.action(/^rsn_(.+)_(.+)$/, async ctx => { if(!verify(ctx, ctx.match[2])) return; const u = await User.findOne({ userId: ctx.match[2] }); const d = Math.floor(Math.abs(new Date() - u.streakStart)/86400000); if(d>u.bestStreak)u.bestStreak=d; u.streakStart=new Date(); u.relapseHistory.push({reason:ctx.match[1]}); await u.save(); try{await ctx.deleteMessage();}catch(e){} await ctx.reply('✅ Reset. Stay Strong!'); ctx.answerCbQuery(); });
-bot.action(/^ref_(.+)$/, async ctx => { if(!verify(ctx, ctx.match[1])) return; try{await ctx.deleteMessage();}catch(e){} await handleStreak(ctx); ctx.answerCbQuery(); });
-bot.action(/^can_(.+)$/, async ctx => { if(!verify(ctx, ctx.match[1])) return; try{await ctx.deleteMessage();}catch(e){} ctx.answerCbQuery(); });
 
-// Leaderboard Fix
+bot.action(/^rel_(.+)$/, async ctx => { 
+    try {
+        if(!verify(ctx, ctx.match[1])) return ctx.answerCbQuery('⚠️ Not allowed');
+        await ctx.editMessageText('አይዞህ! ለምን ወደቅክ? (ምክንያቱን ምረጥ)', Markup.inlineKeyboard([
+            [Markup.button.callback('🥱 መሰላቸት', `rsn_bored_${ctx.match[1]}`)], 
+            [Markup.button.callback('😰 ጭንቀት', `rsn_stress_${ctx.match[1]}`)], 
+            [Markup.button.callback('🔥 ስሜት', `rsn_urg_${ctx.match[1]}`)], 
+            [Markup.button.callback('❌ ሰረዝ (Cancel)', `can_${ctx.match[1]}`)]
+        ]));
+    } catch (e) { console.error(e); ctx.answerCbQuery('Error'); }
+});
+
+bot.action(/^rsn_(.+)_(.+)$/, async ctx => { 
+    try {
+        if(!verify(ctx, ctx.match[2])) return ctx.answerCbQuery('⚠️ Not allowed');
+        const u = await User.findOne({ userId: ctx.match[2] }); 
+        const d = Math.floor(Math.abs(new Date() - u.streakStart)/86400000); 
+        if(d > u.bestStreak) u.bestStreak = d; 
+        u.streakStart = new Date(); 
+        u.relapseHistory.push({reason:ctx.match[1]}); 
+        await u.save(); 
+        // Try deleting the menu message, ignore if fails
+        try{await ctx.deleteMessage();}catch(e){} 
+        await ctx.reply('✅ መዝግቤያለሁ። ቀናትህ ወደ 0 ተመልሰዋል። ጠንክር! 💪'); 
+        ctx.answerCbQuery();
+    } catch (e) { console.error(e); ctx.answerCbQuery('Error'); }
+});
+
+bot.action(/^ref_(.+)$/, async ctx => { 
+    try {
+        if(!verify(ctx, ctx.match[1])) return ctx.answerCbQuery('⚠️ Not allowed');
+        try{await ctx.deleteMessage();}catch(e){} 
+        await handleStreak(ctx); 
+        ctx.answerCbQuery();
+    } catch (e) { console.error(e); }
+});
+
+bot.action(/^can_(.+)$/, async ctx => { 
+    try {
+        if(!verify(ctx, ctx.match[1])) return ctx.answerCbQuery('⚠️ Not allowed');
+        try{await ctx.deleteMessage();}catch(e){} 
+        ctx.answerCbQuery();
+    } catch (e) { console.error(e); }
+});
+
+// Fixed Leaderboard
 bot.action(/^led_(.+)$/, async ctx => {
-    const topUsers = await User.find().sort({ streakStart: 1 }).limit(10);
-    let msg = '🏆 **Top 10 Leaders** 🏆\n\n';
-    topUsers.forEach((u, i) => {
-        const d = Math.floor(Math.abs(new Date() - u.streakStart) / 86400000);
-        // Escape name to prevent Markdown crash
-        msg += `${i+1}. ${escapeMarkdown(u.firstName || 'User')} — **${d} days**\n`;
-    });
-    // Add Back button
-    await ctx.editMessageText(msg, { 
-        parse_mode: 'MarkdownV2', // Use V2 for better escaping
-        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', `ref_${ctx.match[1]}`)]])
-    });
+    try {
+        const topUsers = await User.find().sort({ streakStart: 1 }).limit(10);
+        let msg = '🏆 *Top 10 Leaders* 🏆\n\n';
+        
+        topUsers.forEach((u, i) => {
+            const d = Math.floor(Math.abs(new Date() - u.streakStart) / 86400000);
+            // Escape name properly for MarkdownV2 to prevent crash
+            const name = escapeMarkdown(u.firstName || 'User');
+            // Use proper V2 bold syntax (*) and escape dot (.)
+            msg += `${i+1}\\. ${name} — *${d} days*\n`;
+        });
+        
+        await ctx.editMessageText(msg, { 
+            parse_mode: 'MarkdownV2', 
+            ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Back', `ref_${ctx.match[1]}`)]])
+        });
+    } catch (e) { 
+        console.error("Leaderboard Error:", e);
+        ctx.answerCbQuery("Error loading leaderboard");
+    }
 });
 
 async function showAdminMenu(ctx) {
     const c = await User.countDocuments();
     await ctx.reply(`⚙️ Admin (Users: ${c})`, Markup.inlineKeyboard([
-        // Changed "➕ Motivation" to "💪 Motivation" (Manage)
         [Markup.button.callback('💪 Motivation', 'man_mot'), Markup.button.callback('🔲 Layout', 'adm_lay')],
         [Markup.button.callback('📝 Start Msg', 'adm_wel'), Markup.button.callback('🏷️ Rename', 'adm_ren')],
         [Markup.button.callback('📢 Channels', 'adm_chan'), Markup.button.callback('🔘 Custom Btn', 'adm_cus')]
@@ -289,16 +346,17 @@ async function showAdminMenu(ctx) {
 
 const ask = (ctx, s, t) => { setAdminStep(String(ctx.from.id), s); ctx.reply(t); ctx.answerCbQuery(); };
 
-// Motivation Manager (New)
+// Motivation Manager
 bot.action('man_mot', async ctx => {
-    // Show Add + List of Delete buttons
-    const mots = await Motivation.find().sort({ addedAt: -1 }).limit(5); // Show last 5
-    let btns = [[Markup.button.callback('➕ Add New', 'add_mot')]];
-    mots.forEach(m => {
-        const preview = m.text.length > 20 ? m.text.substring(0, 20) + '...' : m.text;
-        btns.push([Markup.button.callback(`🗑️ ${preview}`, `del_mot_${m._id}`)]);
-    });
-    await ctx.editMessageText('Manage Motivations (Last 5):', Markup.inlineKeyboard(btns));
+    try {
+        const mots = await Motivation.find().sort({ addedAt: -1 }).limit(5); 
+        let btns = [[Markup.button.callback('➕ Add New', 'add_mot')]];
+        mots.forEach(m => {
+            const preview = m.text.length > 20 ? m.text.substring(0, 20) + '...' : m.text;
+            btns.push([Markup.button.callback(`🗑️ ${preview}`, `del_mot_${m._id}`)]);
+        });
+        await ctx.editMessageText('Manage Motivations (Last 5):', Markup.inlineKeyboard(btns));
+    } catch (e) { console.error(e); }
 });
 bot.action('add_mot', c => ask(c, 'awaiting_motivation', 'Send Text:'));
 bot.action(/^del_mot_(.+)$/, async c => { await Motivation.findByIdAndDelete(c.match[1]); c.reply('Deleted'); c.answerCbQuery(); });
